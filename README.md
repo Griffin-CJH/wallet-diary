@@ -29,6 +29,8 @@ git clone https://github.com/Griffin-CJH/wallet-diary ~/.claude/skills/wallet-di
 
 也可以在仓库页面点 **Code → Download ZIP**，解压后把文件夹改名为 `wallet-diary`，放进 `~/.claude/skills/`（只想在某个项目里用，就放进那个项目的 `.claude/skills/`）。
 
+**豆包**（办公模式 / 云电脑）：打开 [豆包一键安装指令](./豆包一键安装指令.md)，把其中「提示词」整段复制粘贴进豆包的新对话，豆包会自己完成安装、建账本、设好飞书云盘自动备份，并问你各账户的余额。需要你的豆包能用飞书云盘（账本每次写入后会覆盖上传一份到你自己的飞书）。普通聊天模式没有文件系统，用不了。
+
 **其他支持 skill 的 Agent**：如果它支持用 GitHub 链接导入 skill，直接粘贴本仓库链接。前提是这个 Agent 能读写本地文件、能运行 Python。
 
 装好后对 Agent 说一句「中午面 25」，它会先带你建账本：问你数据放在哪个文件夹、用什么币种、有哪些账户。
@@ -51,6 +53,7 @@ git clone https://github.com/Griffin-CJH/wallet-diary ~/.claude/skills/wallet-di
 | `wallet.py` | 所有的计算和账本读写 |
 | `review.md` | 生成一章日记时的写作规则 |
 | `template.html` | 日记页面的模板 |
+| `豆包一键安装指令.md` | 在豆包办公模式里安装用的提示词 |
 
 ## 作者与许可
 
