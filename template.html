@@ -1,0 +1,1070 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>钱包日记</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;700;900&display=swap" rel="stylesheet">
+<style>
+  /* 方向 A · 纸质日记。颜色、字号、进场节奏、左栏、［查］沿用手感原型 v2（用户已验证）。 */
+  :root{
+    --paper:#f4efe4; --ink:#2b2620; --soft:#5b5246; --mute:#9b907e; --red:#b4472f;
+    --mute-strong:#7f7462;   /* 信息用（日期、手法、原话）；--mute 只给装饰和提示（左栏未选中、底部提示） */
+    --dash:rgba(120,100,70,.3);
+    --paper-deep:#ece5d6;   /* 比纸面深一档：趋势图的底色块 */
+    --paper-hi:#fbf8f1;     /* 比纸面浅一档：原话小卡片（像夹进本子里的一张便签） */
+    --blue:#1f5f9a;   /* 收入的色阶（墨水蓝），和支出的朱红分开；只在热力图的收入模式用 */
+    --serif:'Noto Serif SC','Songti SC','SimSun',serif;
+    --ease-out:cubic-bezier(.2,.9,.25,1);
+    --nav-w:112px; --gutter-l:160px; --gutter-r:12vw;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;overflow:hidden;background:var(--paper);color:var(--ink);font-family:var(--serif)}
+
+  .track{position:fixed;inset:0;will-change:transform}
+  .page{height:100vh;height:100dvh;display:flex;align-items:center;padding:0 var(--gutter-r) 0 var(--gutter-l);position:relative}
+  .inner{max-width:720px;width:100%;transform-origin:50% 50%}
+
+  /* 进场：先空白，再逐行升起淡入（每行晚 80ms） */
+  .rise{opacity:0;transform:translateY(34px);transition:opacity .55s ease,transform .7s var(--ease-out)}
+  .page.in .rise{opacity:1;transform:none}
+  .page.in .rise:nth-child(2){transition-delay:.08s}
+  .page.in .rise:nth-child(3){transition-delay:.16s}
+  .page.in .rise:nth-child(4){transition-delay:.24s}
+  .page.in .rise:nth-child(5){transition-delay:.32s}
+  .page.in .rise:nth-child(6){transition-delay:.40s}
+  .page.in .rise:nth-child(n+7){transition-delay:.48s}
+
+  /* 字号阶梯：小字只用三级——注脚 12（原话标签、笔数角标、月份、图例、刻度）／信息 14（标签、列头、日期和类别账户、次要按钮、提示）／
+     内容 16（流水行、筛选词、开关、比例条、翻页、卡片、小标题）；往上 正文 18 → h2 28–44 → h1 40–72 → 大数字 64–128 */
+  .kicker .rng{font-weight:400}   /* 标题后面补的日期：常规粗细，读得出是补充 */
+  .kicker{font-size:16px;font-weight:700;letter-spacing:.2em;color:var(--mute-strong)}   /* 中文没有大写撑分量，14px 显弱；账本、钱包页它是唯一的标题，不能比筛选词还小，加粗和筛选器的「日期 / 账户 / 类别」分开；颜色不加深，免得和下面的 h2 抢（用户 10-09） */
+  h1{font-size:clamp(40px,6vw,72px);font-weight:900;line-height:1.15;margin-top:14px;text-wrap:balance}
+  h2{font-size:clamp(28px,3.6vw,44px);font-weight:900;line-height:1.3;margin-top:12px;text-wrap:balance}
+  .big{font-size:clamp(64px,10vw,128px);font-weight:700;color:var(--red);margin-top:28px;line-height:1;font-variant-numeric:tabular-nums}
+  .big-line{display:flex;align-items:flex-end;gap:10px;margin-top:28px}
+  .big-line .big{margin-top:0}
+  .cur-tag{font-size:clamp(12px,1.3vw,16px);letter-spacing:.12em;color:var(--mute-strong);line-height:1;margin-bottom:.15em}   /* 大数字不是人民币时，币种代码像脚注一样落在数字左下（代码在前） */
+  .big-unit{font-size:clamp(22px,2.8vw,34px);font-weight:700;color:var(--red);line-height:1;margin-bottom:.12em}   /* 「元」跟在大数字右下，数字滚动时它不动 */
+  .lede.opening{list-style:none}
+  .lede.opening li + li{margin-top:4px}   /* 开场白是几条短句时，一条一行 */
+  .big-sub{font-size:18px;color:var(--red);margin-top:12px;font-variant-numeric:tabular-nums;letter-spacing:.04em}
+  .lede{font-size:18px;line-height:1.9;color:var(--soft);margin-top:24px;max-width:520px;text-wrap:balance;word-break:keep-all;overflow-wrap:anywhere}
+  /* 正文只在标点、空格处换行，几行排得差不多长，最后一行不会只剩一两个字；一个分句长到一行放不下才按字断（用户 10-09）。
+     试过只用 pretty：中文只挪一个字，「退了款」拆成「退 / 了款」；只用 balance：从中间切，「轮着来」拆成「轮着 / 来」。不支持的浏览器照旧排 */
+
+  /* 左栏：收起时每页两个字（封面 / 趋势 / 发现1…），悬浮向右展开成「字 · 标题」。两个字等宽排成一列，当前页用朱红的胶囊圈起来 */
+  /* 悬停只认链接本身：左栏整条不接鼠标（pointer-events:none），只有链接接；每行都和最长那行一样宽（到它文字后面 16px，JS 写进 --nav-row），
+     行与行之间没有缝，上下移动不会收。展开宽度 = 链接 ＋ 6em 淡出（--nav-open，用户 10-09 定 6 个字宽）：淡出按字号定，不按宽度比例——宽度随标题长短变，
+     2 个字宽以内读着像一条毛边；淡出段不接鼠标，加长不扩大悬停范围。纸色底照旧占满整条，不会把页面内容切掉半截。
+     原来固定展开到 440px、整条都算左栏，文字右边一大截空白也算，鼠标以为移出去了它还不收（用户 10-09） */
+  .nav{position:fixed;left:0;top:0;bottom:0;z-index:5;display:flex;flex-direction:column;justify-content:center;
+    gap:0;padding-left:30px;width:var(--nav-w);transition:width .35s var(--ease-out);overflow:hidden;pointer-events:none}
+  .nav:hover,.nav:focus-within{width:var(--nav-open,440px);background:linear-gradient(90deg,var(--paper) calc(100% - 6em),transparent)}
+  .nav a{display:flex;width:var(--nav-row,max-content);align-items:center;gap:14px;cursor:pointer;color:var(--mute);text-decoration:none;pointer-events:auto;
+    font-size:16px;white-space:nowrap;padding:7px 16px 7px 0;transition:color .2s;outline:none}
+  .nav a .ch{width:56px;height:28px;display:grid;place-items:center;border:1px solid transparent;border-radius:999px;
+    font-size:14px;font-weight:700;letter-spacing:.06em;transition:all .25s;flex:none;font-variant-numeric:tabular-nums}
+  .nav a .t{opacity:0;transform:translateX(-8px);transition:all .3s;overflow:hidden;text-overflow:ellipsis;max-width:300px}
+  .nav:hover a .t,.nav:focus-within a .t{opacity:1;transform:none}
+  .nav a:hover,.nav a.on{color:var(--ink)}
+  .nav a.on .ch{border-color:var(--red);color:var(--red);transform:scale(1.06)}
+  .nav a:focus-visible .ch{border-color:var(--ink);border-style:dashed}
+
+  /* ［查］：按钮 → 就地展开的明细，可在页内滚动（.scroll） */
+  .chk{margin-top:30px;font:inherit;font-size:16px;background:none;border:1px solid var(--ink);color:var(--ink);
+    padding:10px 22px;border-radius:999px;cursor:pointer;transition:all .2s}
+  .chk:hover{background:var(--ink);color:var(--paper)}
+  .chk:active{transform:scale(.94)}
+  .chk:focus-visible{outline:2px dashed var(--red);outline-offset:3px}
+  .rows{max-height:0;overflow:hidden;transition:max-height .5s var(--ease-out);margin-top:18px}
+  .rows.open{max-height:300px;overflow-y:auto}
+  .rows.scroll{scrollbar-width:thin;scrollbar-color:var(--dash) transparent}   /* 页内滚动条压成一根细线，别露出系统的白底灰条 */
+  /* 流水行：［查］、钱包页、账本明细同一种。一行 日期 · 事项 · 类别 · 账户 · 金额 · 原话标签；事项、类别账户放不下就省略号，行高恒定（看板分页按它量）。
+     日期和「类别 · 账户」是信息字（--mute-strong），事项和金额是墨色；原话标签那一列总留着，没有原话也占位，金额才对得齐 */
+  .row{display:grid;grid-template-columns:3.2em minmax(0,1fr) minmax(0,max-content) minmax(5.5em,max-content) 2.6em;gap:12px;align-items:baseline;
+    padding:9px 4px 9px 0;border-bottom:1px dashed var(--dash);font-size:16px;line-height:1.4}
+  .row > span{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .row .d{font-size:14px;color:var(--mute-strong);font-variant-numeric:tabular-nums}
+  .row .meta{font-size:14px;color:var(--mute-strong);max-width:13em}
+  .row .meta .na{color:var(--mute)}   /* 没写账户：浅一档，读得出是「空」 */
+  .row .amt{text-align:right;font-variant-numeric:tabular-nums}   /* 多币种时「CNY +20,000」不折行 */
+  .row .tag{justify-self:end;font-size:12px;letter-spacing:.06em;line-height:16px;color:var(--mute-strong);
+    border:1px solid var(--dash);border-radius:3px;padding:0 4px;transition:color .2s,border-color .2s}
+  .row .tag:empty{display:none}
+  .row.has-raw{cursor:default;outline:none;transition:background .2s}
+  .row.has-raw:hover,.row.has-raw.peek{background:rgba(120,100,70,.06)}
+  .row.has-raw:hover .tag,.row.has-raw.peek .tag,.row.has-raw:focus-visible .tag{color:var(--ink);border-color:var(--ink)}
+  .row.has-raw:focus-visible{outline:2px dashed var(--red);outline-offset:-2px}   /* 内缩：在滚动区里也不被裁 */
+  /* 原话小卡片：整页只有一张，挂在 body 上、position:fixed，滚动区和页面边缘都裁不到它；靠行右下，底下放不下就翻到行上面 */
+  .rawcard{position:fixed;left:0;top:0;z-index:8;max-width:min(340px,calc(100vw - 24px));padding:9px 14px 10px;
+    background:var(--paper-hi);color:var(--ink);border:1px solid rgba(120,100,70,.28);border-radius:3px;
+    box-shadow:0 8px 22px rgba(43,38,32,.12);font-size:16px;line-height:1.7;pointer-events:none;
+    opacity:0;visibility:hidden;transform:translateY(3px);transition:opacity .15s,transform .2s var(--ease-out),visibility .15s}
+  .rawcard.show{opacity:1;visibility:visible;transform:none}
+  @media (prefers-reduced-motion:reduce){.rawcard{transform:none;transition:opacity .1s,visibility .1s}}
+  .sum{margin-top:12px;font-size:14px;color:var(--soft)}
+
+  /* 钱包页：账户表只有发丝线，数字右对齐等宽；去向不明那行用墨色字 + 左边一根虚线，看得见但不报警（不用红） */
+  .pk-sec{margin-top:30px}
+  .pk-sec h3{font-size:14px;font-weight:400;letter-spacing:.2em;color:var(--mute-strong);margin-bottom:6px}
+  .accts{width:100%;border-collapse:collapse;margin-top:22px;font-size:16px;font-variant-numeric:tabular-nums}
+  .accts th{font-weight:400;font-size:14px;letter-spacing:.14em;color:var(--mute-strong);text-align:right;padding:0 0 8px;border-bottom:1px solid var(--ink)}
+  .accts th:first-child,.accts td:first-child{text-align:left}
+  .accts td{text-align:right;padding:11px 0 11px 12px;border-bottom:1px dashed var(--dash);white-space:nowrap}
+  .accts td:first-child{padding-left:0;white-space:normal}
+  .accts td.mute{text-align:left;white-space:normal;font-size:14px}
+  .pk-mute{color:var(--mute-strong);font-size:14px;line-height:1.8}
+  .eq{margin-top:20px;font-size:16px;color:var(--soft);font-variant-numeric:tabular-nums;letter-spacing:.02em}
+  .lost{margin-top:8px;padding-left:14px;border-left:2px dashed var(--ink);font-size:20px;font-weight:700;font-variant-numeric:tabular-nums}
+  .pk-sec .chk{margin-top:14px}
+  .pk-sec .rows.open{max-height:200px}
+  @media (max-height:760px){.pk-sec{margin-top:20px}.accts td{padding-top:7px;padding-bottom:7px}}
+
+  /* 趋势：墨色 2px 一条线；刻度、日期是信息字（--mute-strong），网格是一根发丝 */
+  /* 账户切换在图框上面一行（筛选不进图框）；写法和看板的筛选词一样：选中的用朱红圈起来 */
+  .sw{display:flex;flex-wrap:wrap;gap:4px 2px;margin-top:20px;align-items:baseline}
+  .sw button{font:inherit;font-size:16px;color:var(--soft);background:none;cursor:pointer;
+    border:1px solid transparent;border-radius:999px;padding:2px 10px;transition:color .2s,border-color .2s}
+  .sw button:hover{color:var(--ink);border-color:var(--dash)}
+  .sw button.on{color:var(--red);border-color:var(--red)}
+  .sw button:focus-visible{outline:2px dashed var(--red);outline-offset:2px}
+  /* 图不画框线，垫在一块比纸面略深的底色上（像日记本里贴进去的一张纸片）；四角只圆 4px，不做卡片阴影 */
+  .frame{margin-top:12px;background:var(--paper-deep);border-radius:4px;padding:8px 20px 6px 8px}
+  .frame .curve:first-child{margin-top:8px}
+  .curve{display:block;width:100%;height:auto;margin-top:26px;overflow:visible;font-family:var(--serif)}
+  .curve + .curve{margin-top:14px}
+  .curve .l{fill:none;stroke:var(--ink);stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+  .curve .solo{fill:var(--ink);stroke:var(--paper);stroke-width:2}   /* 只有一个点时画个点，图不空着 */
+  .curve .grid{stroke:rgba(120,100,70,.22);stroke-width:1}   /* 参考线：发丝、实线 */
+  .curve .mark{stroke:var(--mute-strong);stroke-width:1}     /* 最高 / 最低点的小刻痕 */
+  .curve .tick.ext{fill:var(--soft)}
+  .curve .tick{font-size:12px;fill:var(--mute-strong);font-variant-numeric:tabular-nums}
+  .curve .cur{font-size:14px;fill:var(--soft);letter-spacing:.08em}
+  .curve .hz{fill:transparent}
+  .curve .hover{opacity:0;pointer-events:none;transition:opacity .15s}
+  .curve.hovering .hover{opacity:1}
+  .curve.hovering .ends{opacity:0}
+  .curve .xh{stroke:var(--dash);stroke-width:1}
+  .curve .hover circle{fill:var(--ink);stroke:var(--paper);stroke-width:2}
+  .curve .hz{cursor:pointer}
+  .curve .pick{pointer-events:none}
+  .curve .pick line{stroke:var(--red);stroke-width:1;stroke-dasharray:3 3}
+  .curve .pick circle{fill:var(--red);stroke:var(--paper);stroke-width:2}
+
+  /* 点开的某一天：开始余额 → 这天每一笔 → 结算余额。浮在那个点旁边的小卡片（用户 10-09 在卡片和图框下方的面板里选了卡片：面板一展开，居中的整页会往上跳） */
+  .frame{position:relative}
+  .day{background:var(--paper-hi);border:1px solid rgba(120,100,70,.28);border-radius:3px;padding:10px 14px 10px;font-size:16px}
+  .day{position:absolute;z-index:6;width:min(400px,calc(100vw - 24px));box-shadow:0 8px 22px rgba(43,38,32,.12)}
+  .day .dh{display:flex;align-items:baseline;justify-content:space-between;gap:10px;font-size:14px;letter-spacing:.06em;color:var(--mute-strong)}
+  .day .x{font:inherit;font-size:18px;line-height:1;color:var(--mute-strong);background:none;border:0;cursor:pointer;padding:0 2px}
+  .day .x:hover{color:var(--ink)}
+  .day .x:focus-visible{outline:2px dashed var(--red);outline-offset:2px}
+  .day .bl{display:flex;justify-content:space-between;align-items:baseline;padding:6px 4px 6px 0;font-variant-numeric:tabular-nums}
+  .day .bl .h{font-size:14px;letter-spacing:.12em;color:var(--mute-strong)}
+  .day .bl .v{font-weight:700}
+  .day .bl.end{border-top:1px solid var(--ink)}
+  .day .dr{max-height:200px;overflow-y:auto}
+  .day .row{grid-template-columns:minmax(0,1fr) minmax(0,max-content) minmax(4.5em,max-content) 2.6em}
+  .day .row .d{display:none}   /* 这一块整块是同一天，日期写在头上 */
+  .day .quiet{padding:10px 0;color:var(--mute-strong);font-size:16px;border-bottom:1px dashed var(--dash)}
+
+  /* 账本看板：一屏放下，只有明细列表在页内滚。筛选器写成日记里的一句话：日期是填空的下划线，选中的词用朱红圈起来（和左栏当前页的圈一个手法） */
+  .inner.board{display:flex;flex-direction:column;height:100vh;height:100dvh;padding:30px 0 56px}   /* 占满一屏，明细列表拿剩下的高度来分页 */
+  .board > *{flex:none}
+  .board .filters{margin-top:14px;display:grid;grid-template-columns:auto 1fr;gap:8px 14px;align-items:baseline;font-size:16px}
+  .board .lab{font-size:14px;letter-spacing:.12em;color:var(--mute-strong);white-space:nowrap}
+  .board .dates{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px;color:var(--soft)}
+  .board input[type=date]{font:inherit;font-size:16px;color:var(--ink);background:none;border:0;border-bottom:1px solid var(--ink);
+    padding:0 2px 1px;border-radius:0;font-variant-numeric:tabular-nums;cursor:pointer}
+  .board input[type=date]:focus-visible{outline:2px dashed var(--red);outline-offset:3px}
+  .board input[type=date]::-webkit-calendar-picker-indicator{opacity:.45;cursor:pointer}
+  .board .chips{display:flex;flex-wrap:wrap;gap:4px 2px;align-items:baseline}
+  .board .chips button,.board .preset,.board .cur-pick{font:inherit;font-size:16px;color:var(--soft);background:none;cursor:pointer;
+    border:1px solid transparent;border-radius:999px;padding:2px 10px;transition:color .2s,border-color .2s}
+  .board .chips button:hover,.board .preset:hover,.board .cur-pick:hover{color:var(--ink);border-color:var(--dash)}
+  .board .chips button.on{color:var(--red);border-color:var(--red)}
+  .board button:focus-visible{outline:2px dashed var(--red);outline-offset:2px}
+  .board .preset{font-size:14px;color:var(--mute-strong);padding:2px 8px}
+  .board .catcell{display:flex;align-items:baseline;gap:6px}
+  .board .f-cat{flex:1;min-width:0}
+  .board .f-cat.fold{max-height:30px;overflow:hidden}
+  .board .more,.board .clr{flex:none;font-size:14px;color:var(--mute-strong)}
+  /* 跳页：页码写成填空的下划线（和日期筛选一个手法），点开在上方弹一张便签（和原话卡片同一种纸），一格一个页码，当前页朱红圈 */
+  .board .pager{position:relative}
+  .board .pager .jump{color:var(--ink);border:0;border-bottom:1px solid var(--ink);border-radius:0;padding:0 3px 1px;margin:0 2px}
+  .board .pager .jump:hover{border-color:var(--ink)}
+  .board .pager .jump .car{font-size:12px;color:var(--mute-strong);margin-left:3px}
+  .board .pg-pop{position:absolute;bottom:calc(100% + 4px);left:50%;transform:translateX(-50%);z-index:6;display:grid;gap:2px;
+    padding:8px;background:var(--paper-hi);border:1px solid rgba(120,100,70,.28);border-radius:3px;box-shadow:0 8px 22px rgba(43,38,32,.12);
+    max-height:220px;overflow-y:auto}
+  .board .pager .pg-pop button{min-width:2.4em;padding:2px 0}
+  .board .pager .pg-pop button.on{color:var(--red);border-color:var(--red)}
+  .board .chips .n{font-size:12px;color:var(--mute-strong);margin-left:3px;font-variant-numeric:tabular-nums}
+  .board .chips button.on .n{color:inherit}
+
+  /* 摘要：每个币种一行，三个数（标签在上、数在下）；币种本身就是切换下面日历和比例条的开关 */
+  .board .summary{margin-top:20px;display:grid;grid-template-columns:repeat(4,max-content);gap:0 40px;align-items:baseline}
+  .board .summary .h,.board .summary .v{text-align:right}
+  .board .summary .h{font-size:14px;letter-spacing:.08em;color:var(--mute-strong);white-space:nowrap}
+  .board .summary .v{font-size:22px;font-weight:700;line-height:1.35;white-space:nowrap;font-variant-numeric:tabular-nums}   /* 多币种时几行数要上下对齐 */
+  .board .summary.solo{grid-template-columns:repeat(3,max-content)}
+  .board .cur-pick{font-size:16px;letter-spacing:.08em;padding:1px 9px;justify-self:start}
+  .board .cur-pick.on{color:var(--red);border-color:var(--red)}
+  .board .summary .tip{grid-column:1/-1;font-size:14px;color:var(--mute);margin-top:2px}
+
+  /* 日历热力图：一列一周，一个色相（朱红）由浅到深；0 是纸上的淡格；整天退回多于花出的画空心圈 */
+  .board .viz{margin-top:20px;display:grid;grid-template-columns:260px minmax(0,1fr);gap:28px;align-items:start}
+  /* 按月排：每月一张 7 列的小日历（周一开头，一行一周），月和月之间空 14px。日历和上面的开关同宽（这一栏 260px）：
+     一个月时一张铺满、格子加高；两个月正好并排；超过两个月一屏放两个，左右滑（.hs 是页内滚动区） */
+  .board .heat .hs{display:flex;gap:14px;width:100%;overflow-x:auto;overflow-y:hidden;padding-bottom:4px;
+    scrollbar-width:thin;scrollbar-color:var(--dash) transparent}
+  .board .heat .mo{flex:0 0 calc((100% - 14px) / 2)}
+  .board .heat .hs.one .mo{flex-basis:100%}
+  .board .heat .mh{font-size:12px;line-height:16px;color:var(--mute-strong);white-space:nowrap;margin-bottom:2px}
+  .board .heat .cells{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));grid-auto-rows:15px;gap:3px}
+  .board .heat .hs.one .cells{grid-auto-rows:20px}
+  .board .heat i{display:block;border-radius:2px;background:rgba(120,100,70,.11);cursor:pointer}
+  .board .heat i.pad{background:none;cursor:default}
+  .board .heat i.out{background:none;border:1px dashed rgba(120,100,70,.4);cursor:default}   /* 这个月里、但不在选中范围的日子：虚线空格占位，日历形状不缺角，也和「这天没花」的实心淡格分得开 */
+  .board .heat i.lv1{background:rgba(180,71,47,.28)}
+  .board .heat i.lv2{background:rgba(180,71,47,.5)}
+  .board .heat i.lv3{background:rgba(180,71,47,.74)}
+  .board .heat i.lv4{background:var(--red)}
+  .board .heat.inc i.lv1{background:rgba(31,95,154,.26)}   /* 收入：同样四档，换墨水蓝 */
+  .board .heat.inc i.lv2{background:rgba(31,95,154,.48)}
+  .board .heat.inc i.lv3{background:rgba(31,95,154,.72)}
+  .board .heat.inc i.lv4{background:var(--blue)}
+  .board .heat i.neg{background:none;box-shadow:inset 0 0 0 1.5px var(--soft)}
+  /* 热力图的两组开关：支出 / 收入、笔数 / 金额，同一行，中间一根细竖线分组；和摘要里的币种开关一个写法 */
+  /* 开关这一行和日历同宽：四个按钮两头贴齐日历、间距均分，分组的细竖线画在正中（四个按钮一样宽，正中就是二三之间）。
+     用户 10-09 定：对齐两边的边，不硬对两个月之间的缝——一个月时没有缝，滑动时缝会动 */
+  .board .modes{position:relative;display:flex;flex-wrap:nowrap;align-items:center;justify-content:space-between;margin-bottom:6px;font-size:14px;color:var(--mute-strong)}
+  .board .modes .grp{display:contents}
+  .board .modes::after{content:'';position:absolute;left:50%;top:3px;bottom:3px;border-left:1px solid var(--dash)}
+  .board .modes button{font:inherit;font-size:16px;color:var(--soft);background:none;cursor:pointer;
+    border:1px solid transparent;border-radius:999px;padding:0 8px;line-height:20px;transition:color .2s,border-color .2s}
+  .board .modes button:hover{color:var(--ink);border-color:var(--dash)}
+  .board .modes button.on{color:var(--red);border-color:var(--red)}
+  .board .modes button.on[data-k=income]{color:var(--blue);border-color:var(--blue)}
+  .board .heat i[data-d]:hover{outline:1px solid var(--ink);outline-offset:1px}
+  .board .heat i.on{outline:2px solid var(--ink);outline-offset:1px}
+  .board .scale{display:flex;flex-wrap:wrap;gap:4px 10px;margin-top:8px;font-size:12px;color:var(--mute-strong)}
+  .board .scale span{display:inline-flex;align-items:center;gap:3px;white-space:nowrap}
+  .board .scale i{width:10px;height:10px;cursor:default}
+  .board .scale i:hover{outline:none}
+
+  /* 类别比例条：从大到小；条 10px、起点方、末端 5px 圆角；数字用墨色不用条的颜色；选中的类别条变朱红，其余退成淡色。
+     高度跟左栏（开关 + 日历 + 图例）走：.bars-box 撑满这一行，比例条绝对定位填进去、不参与撑高，放不下的在里面滚——
+     左栏高度随一个月 5 周还是 6 周、图例折不折行变，写死高度总有一边对不齐 */
+  .board .bars-box{position:relative;align-self:stretch}
+  .board .bars{position:absolute;inset:0;align-content:start;display:grid;grid-template-columns:max-content minmax(40px,1fr) max-content max-content;column-gap:10px;align-items:center;
+    overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--dash) transparent;font-size:16px}
+  .board .bar{display:grid;grid-template-columns:subgrid;grid-column:1/-1;align-items:center;font:inherit;color:inherit;text-align:left;
+    background:none;border:0;padding:3px 0;cursor:pointer}
+  .board .bar .rail{height:10px;padding:0;align-self:center}
+  .board .bar .fill{display:block;height:10px;min-width:2px;background:var(--soft);border-radius:0 5px 5px 0;transition:background .2s,width .4s var(--ease-out)}
+  .board .bars.picking .bar .fill{background:var(--dash)}
+  .board .bars .bar.on .fill{background:var(--red)}
+  .board .bar .name{white-space:nowrap;max-width:7em;overflow:hidden;text-overflow:ellipsis}
+  .board .bar .amt{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .board .bar .pct{text-align:right;font-size:14px;color:var(--mute-strong);font-variant-numeric:tabular-nums;min-width:3.2em}
+  .board .bar:hover .name,.board .bar:focus-visible .name{text-decoration:underline;text-underline-offset:3px}
+  .board .bar.on .name{color:var(--red)}
+  .board .none{font-size:14px;color:var(--mute-strong)}
+
+  .board .cap{margin-top:20px;font-size:14px;letter-spacing:.06em;color:var(--mute-strong)}
+  /* 明细不滚动，分页：列表占掉剩下的高度，每页放得下几条就几条；翻页一行固定高度，只有一页时空着 */
+  .board .list{flex:1 1 0;min-height:90px;overflow:hidden;margin-top:2px;padding-right:6px}
+  .board .pager{flex:none;height:34px;display:flex;align-items:center;justify-content:center;gap:18px;font-size:14px;color:var(--mute-strong);font-variant-numeric:tabular-nums}
+  .board .pager button{font:inherit;font-size:16px;color:var(--soft);background:none;cursor:pointer;
+    border:1px solid transparent;border-radius:999px;padding:2px 12px;transition:color .2s,border-color .2s}
+  .board .pager button:hover{color:var(--ink);border-color:var(--dash)}
+  .board .pager button.off{color:var(--mute);cursor:default;border-color:transparent}
+  .board .empty{padding:18px 0;color:var(--mute-strong);font-size:16px}
+  @media (max-width:640px){
+    .board .viz{grid-template-columns:1fr}
+    .board .bars-box{position:static}
+    .board .bars{position:static;max-height:150px}   /* 窄屏上下排，没有左栏可跟，回到固定高度 */
+    .board .summary{column-gap:18px}
+    .board .summary .v{font-size:18px}
+  }
+
+  .hint{position:fixed;bottom:26px;left:50%;transform:translateX(-50%);font-size:14px;color:var(--mute);z-index:5;
+    letter-spacing:.1em;transition:opacity .4s;pointer-events:none}
+  .toast{position:fixed;top:40px;left:50%;transform:translate(-50%,-14px);z-index:10;background:rgba(30,26,22,.92);color:var(--paper);
+    font-size:16px;padding:12px 24px;border-radius:999px;opacity:0;pointer-events:none;transition:opacity .35s,transform .35s var(--ease-out)}
+  .toast.show{opacity:1;transform:translate(-50%,0)}
+
+  /* 窄屏：左栏缩成一条，正文让出边距 */
+  @media (max-width:640px){
+    :root{--nav-w:60px; --gutter-l:72px; --gutter-r:20px}
+    .nav{padding-left:8px}
+    .nav a .ch{width:46px;height:24px;font-size:12px;letter-spacing:0}
+    .nav:hover,.nav:focus-within{width:min(var(--nav-open,420px),90vw)}
+    .row{grid-template-columns:2.9em minmax(0,1fr) minmax(0,max-content) minmax(4.5em,max-content) 2.6em;gap:8px}
+    .row .meta{max-width:6.5em}
+    .big{font-size:12vw}   /* 「+18,742.95」这种十位数要在一行里放得下 */
+  }
+  /* 系统要求减少动效：内容直接出现，不升起 */
+  @media (prefers-reduced-motion:reduce){
+    .rise{transform:none;transition:opacity .2s}
+    .page.in .rise{transition-delay:0s}
+  }
+</style>
+</head>
+<body>
+<nav class="nav" id="nav"></nav>
+<div class="track" id="track"></div>
+<div class="hint" id="hint">往下用力推 ↓</div>
+<script>const DATA = /*__WALLET_DATA__*/null;</script>
+<script id="wallet-logic">
+/* 页面的全部算数。只按脚本打好的标签挑行、按分求和、查每日余额表；不判断类别方向、转账、退款、期初日（那些是口径，归 wallet.py）。 */
+const L = (() => {
+  const UNASSIGNED = '（未指定账户）';
+  const DAY = 86400000;
+  const toDate = s => new Date(s + 'T00:00:00Z');
+  const addDays = (s, n) => new Date(toDate(s).getTime() + n * DAY).toISOString().slice(0, 10);
+  const daysBetween = (a, b) => Math.round((toDate(b) - toDate(a)) / DAY);
+  const cents = x => Math.round(x * 100);
+  const acct = r => r.account || UNASSIGNED;
+
+  function fmt(x, o = {}) {
+    const c = Math.round(Math.abs(x) * 100);
+    const int = Math.floor(c / 100).toLocaleString('en-US'), dec = c % 100;
+    const body = dec ? `${int}.${String(dec).padStart(2, '0').replace(/0$/, '')}` : int;
+    return (c && x < 0 ? '−' : c && o.sign ? '+' : '') + body;
+  }
+
+  const filterRows = (rows, f = {}) => rows.filter(r =>
+    (!f.from || r.date >= f.from) && (!f.to || r.date <= f.to) &&
+    (!f.categories || f.categories.includes(r.category)) &&
+    (!f.accounts || f.accounts.includes(acct(r))));
+
+  function totals(rows) {
+    const out = {};
+    for (const r of rows) {
+      const t = out[r.currency] ||= {expense: 0, income: 0, calibration: 0};
+      if (r.kind === 'expense') t.expense -= cents(r.amount);
+      else if (r.kind === 'income') t.income += cents(r.amount);
+      else if (r.kind === 'calibration') t.calibration += cents(r.amount);
+    }
+    for (const t of Object.values(out)) for (const k in t) t[k] = t[k] / 100 || 0;
+    return out;
+  }
+
+  /* 每日余额表的下标区间：起点取 from 的前一天（= from 当天开始时），超出表的部分夹到两端 */
+  function span(db, from, to) {
+    const n = db.accounts.length ? db.accounts[0].values.length : 0;
+    return [Math.max(0, daysBetween(db.from, from) - 1), Math.min(n - 1, daysBetween(db.from, to))];
+  }
+
+  function change(db, accounts, from, to) {
+    const [i0, i1] = span(db, from, to), out = {};
+    for (const a of db.accounts) {
+      if (accounts && !accounts.includes(a.account)) continue;
+      out[a.currency] = (out[a.currency] || 0) + (i1 < i0 ? 0 : cents(a.values[i1]) - cents(a.values[i0]));
+    }
+    for (const c in out) out[c] = out[c] / 100 || 0;
+    return out;
+  }
+
+  /* 「未指定账户」那行是从 0 累加的，只取它在这段里的变化（减掉起点那天的值）：「全部」的起点 = 真实账户之和，和钱包页对得上 */
+  function seriesByCurrency(db, from, to) {
+    const [i0, i1] = span(db, from, to), out = {};
+    for (const a of db.accounts) {
+      const s = out[a.currency] ||= [], base = a.account === UNASSIGNED ? cents(a.values[i0]) : 0;
+      for (let i = i0; i <= i1; i++) s[i - i0] = (s[i - i0] || 0) + cents(a.values[i]) - base;
+    }
+    for (const c in out) out[c] = out[c].map((v, k) => ({date: addDays(db.from, i0 + k), value: v / 100}));
+    return out;
+  }
+
+  /* 趋势图上点开的某一天：开始（前一天日终）、这天这个币种的每一笔（账本顺序）、结算（这天日终）。
+     account 为 null 是「全部」：转账、校准、未指定账户的账都列，开始 ＋ 每笔 ＝ 结算 */
+  function dayDetail(ledger, db, date, cur, account) {
+    const s = seriesByCurrency(account ? {...db, accounts: db.accounts.filter(a => a.account === account)} : db, date, date)[cur] || [];
+    const rows = ledger.filter(r => r.date === date && r.currency === cur && (!account || acct(r) === account));
+    return {start: s[0]?.value ?? 0, end: s[s.length - 1]?.value ?? 0, rows};
+  }
+
+  function dayExpense(rows, cur) {
+    const by = {};
+    for (const r of rows) if (r.kind === 'expense' && r.currency === cur) by[r.date] = (by[r.date] || 0) - cents(r.amount);
+    for (const d in by) by[d] = by[d] / 100 || 0;
+    return by;
+  }
+
+  /* 每天的笔数和金额（kind 是 'expense' 或 'income'）：支出按 −amount 求和（退款日为负），收入按 amount；都按分 */
+  function dayStats(rows, cur, kind) {
+    const by = {}, sign = kind === 'expense' ? -1 : 1;
+    for (const r of rows) if (r.kind === kind && r.currency === cur) {
+      const d = by[r.date] ||= {count: 0, amount: 0};
+      d.count += 1; d.amount += sign * cents(r.amount);
+    }
+    for (const d of Object.values(by)) d.amount = d.amount / 100 || 0;
+    return by;
+  }
+
+  function categoryShares(rows, cur) {   // 只列冲减退款后仍是正数的支出类别
+    const by = {};
+    for (const r of rows) if (r.kind === 'expense' && r.currency === cur) by[r.category] = (by[r.category] || 0) - cents(r.amount);
+    const list = Object.entries(by).filter(([, c]) => c > 0);
+    const total = list.reduce((s, [, c]) => s + c, 0);
+    return list.map(([category, c]) => ({category, amount: c / 100, share: c / total}))
+      .sort((a, b) => b.amount - a.amount || a.category.localeCompare(b.category));
+  }
+
+  const pickIds = (ledger, ids) => { const set = new Set(ids.map(String)); return ledger.filter(r => set.has(String(r.id))); };
+
+  function signedSum(rows) {
+    const out = {};
+    for (const r of rows) out[r.currency] = (out[r.currency] || 0) + cents(r.amount);
+    for (const c in out) out[c] = out[c] / 100 || 0;
+    return out;
+  }
+
+  /* 纵轴刻度：步长取 1 / 2 / 5 × 10ⁿ 里离（范围 / n）最近的一档，上下各取整到步长的整数倍；平线上下各让出一成 */
+  function niceTicks(lo, hi, n = 4) {
+    if (hi === lo) { const pad = Math.abs(lo) * 0.1 || 1; lo -= pad; hi += pad; }
+    const raw = (hi - lo) / n, mag = 10 ** Math.floor(Math.log10(raw)), f = +(raw / mag).toFixed(6);
+    const step = (f < 1.5 ? 1 : f < 3 ? 2 : f < 7 ? 5 : 10) * mag;
+    const dp = Math.max(0, -Math.floor(Math.log10(step) + 1e-9)), at = k => +(k * step).toFixed(dp) || 0;
+    /* 除出来的倍数只抹掉浮点尾巴（相对误差 1e-9），不按固定小数位舍——两端量级差很远时，−5 ÷ 2 亿也要算成 −1 格 */
+    const snap = q => q + Math.abs(q) * 1e-9;
+    const a = Math.floor(snap(lo / step)), b = Math.ceil(-snap(-hi / step)), ticks = [];
+    for (let k = a; k <= b; k++) ticks.push(at(k));
+    return {lo: at(a), hi: at(b), step: at(1), ticks};
+  }
+
+  /* 日历按月排：每月从 1 号排到月底，lead = 1 号前面空几格（周一开头）；in = 这天在选中的范围里 */
+  function monthGrid(from, to) {
+    const out = [];
+    for (let m = from.slice(0, 7) + '-01'; m <= to;) {
+      const [y, mo] = m.split('-').map(Number), n = new Date(Date.UTC(y, mo, 0)).getUTCDate();
+      out.push({month: m.slice(0, 7), lead: (toDate(m).getUTCDay() + 6) % 7,
+                days: [...Array(n)].map((_, i) => { const date = addDays(m, i); return {date, in: date >= from && date <= to}; })});
+      m = addDays(m, n);
+    }
+    return from <= to ? out : [];
+  }
+
+  return {UNASSIGNED, addDays, daysBetween, fmt, filterRows, totals, change, seriesByCurrency, dayDetail,
+          dayExpense, dayStats, categoryShares, pickIds, signedSum, niceTicks, monthGrid};
+})();
+</script>
+<script>
+const D = DATA, S = D.script, ST = D.stats;
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+const dot = d => d.slice(5).replace('-', '.');
+/* 金额一律带单位：人民币写「6,570 元」「−25 元」，其他币种写「USD 12.5」。L.fmt 只管数字，单位只在这里加 */
+const money = (v, cur, o) => cur === 'CNY' ? `${L.fmt(v, o)} 元` : `${esc(cur)} ${L.fmt(v, o)}`;
+/* 同一行已经标了币种代码（看板摘要的币种开关、趋势图的币种标题）：人民币照样带「元」，其他币种只写数字，不重复代码 */
+const moneyIn = (v, cur, o) => cur === 'CNY' ? money(v, cur, o) : L.fmt(v, o);
+
+/* 左栏收起时显示 ch（两个字）；title 是悬浮展开后跟在后面的标题，和 ch 重复的页留空 */
+const PAGES = [
+  {ch: '封面', title: S.title, render: renderCover},
+  {ch: '趋势', title: '', render: renderFate},
+  ...S.findings.map((f, i) => ({ch: `发现${i + 1}`, title: f.title, render: el => renderFinding(el, f, i)})),
+  {ch: '账本', title: '', render: renderBoard},
+  {ch: '钱包', title: '', render: renderPocket},
+  {ch: '展望', title: '', render: renderEnd},
+];
+
+function renderCover(el) {
+  const wc = ST.wallet_change;
+  const cur = D.default_currency in wc ? D.default_currency : Object.keys(wc)[0];
+  const others = Object.keys(wc).filter(c => c !== cur && wc[c] !== 0);
+  el.innerHTML = `
+    <div class="kicker rise">${dot(ST.range.from)} — ${dot(ST.range.to)}</div>
+    <h1 class="rise">${esc(S.title)}</h1>
+    <div class="big-line rise">${cur === 'CNY' ? '' : `<span class="cur-tag">${esc(cur)}</span>`}<div class="big" data-to="${wc[cur] ?? 0}">0</div>${cur === 'CNY' ? '<span class="big-unit">元</span>' : ''}</div>
+    ${others.length ? `<div class="big-sub rise">${others.map(c => money(wc[c], c, {sign: true})).join(' · ')}</div>` : ''}
+    ${Array.isArray(S.opening) ? `<ul class="lede opening rise">${S.opening.map(s => `<li>${esc(s)}</li>`).join('')}</ul>`
+      : `<p class="lede rise">${esc(S.opening)}</p>`}`;
+}
+
+function renderEnd(el) {
+  const up = ST.upcoming_30d;
+  el.innerHTML = `
+    <div class="kicker rise">展望</div>
+    <h2 class="rise">${esc(S.closing)}</h2>
+    ${up.length ? `<p class="lede rise">接下来已经排好的：${up.map(x =>
+      `${dot(x.date)} ${esc(x.item)} ${money(x.amount, x.currency, {sign: true})}`).join(' · ')}</p>` : ''}`;
+}
+
+/* 趋势：每个币种一条余额线、各自一张图（不共用纵轴），进页时一笔画出来。不钉发现：发现是整段时间里看出来的，不落在某一天（用户 10-07）。
+   图框上面一行是账户切换：默认「全部」（同币种账户加总），也可以只看一个账户——数据是同一张每日余额表里那个账户的一行，口径和 L.seriesByCurrency 相同 */
+const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+function renderFate(el) {
+  const db = D.daily_balance;
+  const accts = db.accounts.map(a => a.account).filter(a => a !== L.UNASSIGNED);   // 「未指定账户」没有余额，不进切换
+  let pick = null;   // null = 全部
+  let day = null, points = {};   // 点开的那天 {cur, date}；每张图的序列和取点函数（draw 时填）
+  el.innerHTML = `<div class="kicker rise">趋势</div><h2 class="rise"></h2>
+    ${accts.length > 1 ? `<div class="sw rise" role="group" aria-label="看哪个账户的曲线">${['', ...accts].map(a =>
+      `<button data-v="${esc(a)}" class="${a ? '' : 'on'}" aria-pressed="${!a}">${a ? esc(a) : '全部'}</button>`).join('')}</div>` : ''}
+    <div class="frame rise"></div>`;
+  const frame = el.querySelector('.frame');
+
+  function draw() {
+    points = {};
+    const series = L.seriesByCurrency(pick ? {...db, accounts: db.accounts.filter(a => a.account === pick)} : db, ST.range.from, ST.range.to);
+    const curs = Object.keys(series).filter(c => series[c].length).sort((a, b) => (b === D.default_currency) - (a === D.default_currency));
+    const many = curs.length > 1, main = series[curs[0]] || [];
+    const first = main[0]?.value ?? 0, last = main[main.length - 1]?.value ?? 0;
+    const W = Math.round(Math.max(320, Math.min(720, (frame.clientWidth ? frame.clientWidth - 26 : el.clientWidth) || 700)));   // 视口宽 = 画布宽，窄屏上字不会被缩小
+    const M = {t: 30, r: 16, b: 28, l: 88};   // 上留币种标题，左留刻度（带单位），下留起止日期
+    const svgs = curs.map((cur, ci) => {
+      const H = !many ? 240 : ci === 0 ? 200 : 120;   // 多币种：主币种那张大，其余压矮，三张也放得进一屏
+      const s = series[cur], vs = s.map(p => p.value), n = s.length;
+      const vlo = Math.min(...vs), vhi = Math.max(...vs);
+      /* 纵轴：1-2-5 取整的参考线，按约每 65px 一格要（主图 3 格 → 通常 4–5 根线），纵轴范围就取到最外两根线，线不贴边 */
+      const nt = L.niceTicks(vlo, vhi, Math.max(2, Math.round((H - M.t - M.b) / 65))), lo = nt.lo, span = nt.hi - nt.lo;
+      const x = i => M.l + (n > 1 ? i / (n - 1) : .5) * (W - M.l - M.r);
+      const y = v => M.t + (1 - (v - lo) / span) * (H - M.t - M.b);
+      const d = s.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(p.value).toFixed(1)}`).join(' ');
+      const grid = nt.ticks.map(v => `<line class="grid" x1="${M.l}" x2="${W - M.r}" y1="${y(v)}" y2="${y(v)}"/>
+        <text class="tick" x="${M.l - 10}" y="${y(v) + 4}" text-anchor="end">${money(v, cur)}</text>`).join('');
+      /* 原来的最高 / 最低点刻度：离某根参考线不到 14px（标签会叠、读起来重复）就不画；留下的只画一小截刻痕，不拉通线，和参考线分开 */
+      const ext = [...new Set([vhi, vlo])].filter(v => !nt.ticks.some(t => Math.abs(y(t) - y(v)) < 14))
+        .map(v => `<line class="mark" x1="${M.l - 6}" x2="${M.l}" y1="${y(v)}" y2="${y(v)}"/>
+        <text class="tick ext" x="${M.l - 10}" y="${y(v) + 4}" text-anchor="end">${money(v, cur)}</text>`).join('');
+      const ticks = grid + ext;
+      const head = many ? `${cur}　${moneyIn(s[0].value, cur)} → ${moneyIn(s[n - 1].value, cur)}` : '';
+      const label = head ? `<text class="cur" x="${M.l}" y="14">${esc(head)}</text>` : '';
+      return `<svg class="curve" viewBox="0 0 ${W} ${H}" data-cur="${esc(cur)}" data-lo="${lo}" data-span="${span}" role="img" aria-label="${esc(pick || '全部账户')} ${esc(cur)} 余额，从 ${money(s[0].value, cur)} 到 ${money(s[n - 1].value, cur)}">
+        ${label}${ticks}
+        <text class="tick ends" x="${M.l}" y="${H - 6}">${dot(ST.range.from)}</text>
+        <text class="tick ends" x="${W - M.r}" y="${H - 6}" text-anchor="end">${dot(ST.range.to)}</text>
+        <path class="l" d="${d}"/>${n === 1 ? `<circle class="solo" cx="${x(0)}" cy="${y(s[0].value)}" r="4"/>` : ''}
+        <g class="hover"><line class="xh" y1="${M.t - 6}" y2="${H - M.b}"/><circle r="4"/><text class="tick" y="${H - 6}"></text></g>
+        <g class="pick" display="none"><line y1="${M.t - 6}" y2="${H - M.b}"/><circle r="4.5"/></g>
+        <rect class="hz" x="${M.l}" y="0" width="${W - M.l - M.r}" height="${H - M.b}"/></svg>`;
+    });
+    el.querySelector('h2').innerHTML = `从 ${money(first, curs[0])} 走到 ${money(last, curs[0])}`;
+    frame.innerHTML = svgs.join('');
+    /* 悬停：竖线 + 点 + 底部「日期 · 余额」，起止日期让位；点一下：展开那天（见 openDay） */
+    frame.querySelectorAll('svg.curve').forEach(svg => {
+      const cur = svg.dataset.cur, s = series[cur], n = s.length, hv = svg.querySelector('.hover'), t = hv.querySelector('text');
+      const hz = svg.querySelector('.hz'), x0 = +hz.getAttribute('x'), w = +hz.getAttribute('width');
+      const lo = +svg.dataset.lo, span = +svg.dataset.span, top = +hv.querySelector('.xh').getAttribute('y1') + 6;   // 和画线用同一个纵轴范围（取整后的参考线）
+      const bot = +hv.querySelector('.xh').getAttribute('y2');
+      const at = e => { const r = svg.getBoundingClientRect(), vx = (e.clientX - r.left) / r.width * svg.viewBox.baseVal.width;
+        return n > 1 ? Math.max(0, Math.min(n - 1, Math.round((vx - x0) / w * (n - 1)))) : 0; };
+      const pt = i => ({x: x0 + (n > 1 ? i / (n - 1) : .5) * w, y: top + (1 - (s[i].value - lo) / span) * (bot - top)});
+      points[cur] = {s, pt};
+      hz.addEventListener('pointermove', e => {
+        const i = at(e), {x: px, y: py} = pt(i);
+        hv.querySelector('.xh').setAttribute('x1', px); hv.querySelector('.xh').setAttribute('x2', px);
+        hv.querySelector('circle').setAttribute('cx', px); hv.querySelector('circle').setAttribute('cy', py);
+        t.textContent = `${i ? dot(s[i].date) : '期初'} · ${money(s[i].value, cur)}`;   // 第 0 点是起始日前一天的日终 = 期初
+        t.setAttribute('x', Math.max(x0 + 60, Math.min(x0 + w - 60, px))); t.setAttribute('text-anchor', 'middle');
+        svg.classList.add('hovering');
+      });
+      hz.addEventListener('pointerleave', () => svg.classList.remove('hovering'));
+      /* 期初那一点不是范围里的一天，点了不展开；再点同一天收起 */
+      hz.addEventListener('click', e => {
+        const i = at(e);
+        if (!i) return;
+        day = day && day.cur === cur && day.date === s[i].date ? null : {cur, date: s[i].date};
+        openDay();
+      });
+    });
+  }
+
+  /* 点开的那天：开始 → 每一笔 → 结算，数都来自 L.dayDetail（切账户时按新账户重算）。
+     卡片浮在那个点旁边，右边放不下就放左边，上下不出屏。图上同一天钉一根朱红虚线 */
+  function openDay() {
+    el.querySelector('.day')?.remove();
+    frame.querySelectorAll('.pick').forEach(g => g.setAttribute('display', 'none'));
+    rawCard.hide();
+    const P = day && points[day.cur], i = P ? P.s.findIndex(p => p.date === day.date) : -1;
+    if (i < 1) { day = null; return; }
+    const d = L.dayDetail(D.ledger, db, day.date, day.cur, pick), [, mo, dd] = day.date.split('-');
+    const wd = '日一二三四五六'[new Date(day.date + 'T00:00:00Z').getUTCDay()];
+    const box = document.createElement('div');
+    box.className = 'day';
+    box.setAttribute('role', 'group'); box.setAttribute('aria-label', `${+mo}月${+dd}日的账`);
+    box.innerHTML = `<div class="dh"><span>${+mo}月${+dd}日 · 周${wd}${pick ? ` · ${esc(pick)}` : ''}</span><button class="x" aria-label="关闭">×</button></div>
+      <div class="bl"><span class="h">开始</span><span class="v">${money(d.start, day.cur)}</span></div>
+      <div class="dr scroll">${d.rows.length ? d.rows.map(rowHtml).join('') : '<p class="quiet">这天钱包没动过</p>'}</div>
+      <div class="bl end"><span class="h">结算</span><span class="v">${money(d.end, day.cur)}</span></div>`;
+    box.querySelector('.x').onclick = () => { day = null; openDay(); };
+    const svg = [...frame.querySelectorAll('svg.curve')].find(x => x.dataset.cur === day.cur), {x, y} = P.pt(i);
+    const g = svg.querySelector('.pick');
+    g.querySelector('line').setAttribute('x1', x); g.querySelector('line').setAttribute('x2', x);
+    g.querySelector('circle').setAttribute('cx', x); g.querySelector('circle').setAttribute('cy', y);
+    g.removeAttribute('display');
+    frame.appendChild(box);
+    const r = svg.getBoundingClientRect(), fr = frame.getBoundingClientRect(), vb = svg.viewBox.baseVal;
+    const sx = r.left - fr.left + x / vb.width * r.width, sy = r.top - fr.top + y / vb.height * r.height;
+    const bw = box.offsetWidth, bh = box.offsetHeight, m = 12, gap = 16;
+    let left = sx + gap;
+    if (fr.left + left + bw > innerWidth - m) left = sx - gap - bw;   // 右边放不下：放到点的左边
+    left = Math.max(m - fr.left, Math.min(innerWidth - m - fr.left - bw, left));
+    const top = Math.max(m - fr.top, Math.min(innerHeight - m - fr.top - bh, sy - 40));
+    box.style.left = `${Math.round(left)}px`; box.style.top = `${Math.round(top)}px`;
+  }
+
+  /* 切账户只换图框里面的图，按钮不重画，键盘焦点留在按下的那个按钮上 */
+  el.querySelector('.sw')?.addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    pick = b.dataset.v || null;
+    el.querySelectorAll('.sw button').forEach(x => { const on = x === b; x.classList.toggle('on', on); x.setAttribute('aria-pressed', on); });
+    draw(); openDay();
+  });
+  addEventListener('keydown', e => { if (e.key === 'Escape' && day) { day = null; openDay(); } });
+  addEventListener('resize', () => { if (day) openDay(); });
+  draw();
+  el.closest('.page').addEventListener('enter', () => el.querySelectorAll('path.l').forEach(p => {
+    if (REDUCED) return;
+    const len = p.getTotalLength();   // 一笔画出来
+    p.style.transition = 'none'; p.style.strokeDasharray = len; p.style.strokeDashoffset = len;
+    p.getBoundingClientRect();
+    p.style.transition = 'stroke-dashoffset 1.6s cubic-bezier(.6,0,.2,1) .3s'; p.style.strokeDashoffset = 0;
+  }));
+}
+
+/* 一笔账的明细行：发现页的［查］、看板明细、钱包页共用这一种（设计方案第八节「流水行统一一种样式」）。
+   原话和事项不同才挂原话：行尾一个「原话」标签，原话放在 data-raw，悬停 / 聚焦 / 轻点时由 rawCard 显示（不用浏览器的 title 提示）。
+   只有带原话的行能拿到键盘焦点，别的行 Tab 直接跳过 */
+const rowHtml = r => {
+  const raw = String(r.raw_text ?? '').trim(), has = raw && raw !== String(r.item ?? '').trim();
+  const acct = r.account ? esc(r.account) : `<span class="na">${L.UNASSIGNED}</span>`;   // 和看板账户筛选、钱包页账户表同一个写法「（未指定账户）」
+  const meta = [r.category ? esc(r.category) : '', acct].filter(Boolean).join(' · ');   // 类别空着就只写账户，不留半截「 · 」
+  return `<div class="row${has ? ' has-raw' : ''}"${has ? ` tabindex="0" data-raw="${esc(raw)}"` : ''}><span class="d">${dot(r.date)}</span><span class="it">${esc(r.item)}</span>
+  <span class="meta">${meta}</span><span class="amt">${money(r.amount, r.currency, {sign: true})}</span><span class="tag">${has ? '原话' : ''}</span></div>`;
+};
+
+/* ［查］展开 / 收起。收起的明细高 0、看不见，所以同时设 inert：Tab 不会走进看不见的行、也不会弹出原话卡片；
+   inert 不影响 max-height 的收起动画 */
+function toggleRows(btn, rows) {
+  const open = rows.classList.toggle('open');
+  rows.inert = !open;
+  btn.setAttribute('aria-expanded', open);
+  if (!open) rawCard.hide();
+}
+
+function renderFinding(el, f) {
+  const rows = L.pickIds(D.ledger, f.ids), sum = L.signedSum(rows);
+  el.innerHTML = `
+    <div class="kicker rise">发现</div>
+    <h2 class="rise">${esc(f.claim)}</h2>
+    ${f.body ? `<p class="lede rise">${esc(f.body)}</p>` : ''}
+    <div class="rise">
+      <button class="chk" aria-expanded="false">查 · 这 ${rows.length} 笔</button>
+      <div class="rows scroll" inert>${rows.map(rowHtml).join('')}
+        <div class="sum">合计 ${Object.entries(sum).map(([c, v]) => money(v, c, {sign: true})).join(' · ')}</div>
+      </div>
+    </div>`;
+  const btn = el.querySelector('.chk');
+  btn.onclick = () => toggleRows(btn, el.querySelector('.rows'));
+}
+
+/* 账本看板：日期、账户、类别三个筛选器，摘要、日历热力图、类别比例条、明细联动。
+   只按 kind 挑行、按分求和、查每日余额表（L.*）；不在这里判断类别方向或退款。 */
+function renderBoard(el) {
+  el.classList.add('board');
+  const db = D.daily_balance, min = L.addDays(db.from, 1), max = db.to;
+  const cats = [...new Set(D.ledger.filter(r => r.kind === 'expense' || r.kind === 'income').map(r => r.category))];
+  const accts = [...new Set(db.accounts.map(a => a.account))];
+  const st = {from: ST.range.from, to: ST.range.to, cats: new Set(), accts: new Set(), day: null, cur: null, open: false,
+    hk: 'expense', hm: 'amount',   // 热力图：看支出还是收入（hk）、看金额还是笔数（hm）
+    pg: 0, per: null, heatKey: null};   // 明细第几页（从 0 起）、每页几条（量出来的）；日历上次画的日期范围
+  const clamp = d => d < min ? min : d > max ? max : d;
+
+  el.innerHTML = `
+    <div class="kicker rise">账本</div>
+    <div class="filters rise">
+      <span class="lab">日期</span>
+      <div class="dates">从 <input type="date" class="f-from" min="${min}" max="${max}" aria-label="开始日期">
+        到 <input type="date" class="f-to" min="${min}" max="${max}" aria-label="结束日期">
+        <button class="preset" data-p="ch">本章</button><button class="preset" data-p="all">记账以来</button></div>
+      <span class="lab">账户</span>
+      <div class="catcell"><div class="chips f-acct">${accts.map(a => `<button data-v="${esc(a)}" aria-pressed="false">${esc(a)}</button>`).join('')}</div>
+        <button class="preset clr" data-clr="accts" hidden>清除</button></div>
+      <span class="lab">类别</span>
+      <div class="catcell"><div class="chips f-cat fold"></div><button class="preset more" hidden></button>
+        <button class="preset clr" data-clr="cats" hidden>清除</button></div>
+    </div>
+    <div class="summary rise"></div>
+    <div class="viz rise"><div>
+      <div class="modes"><span class="grp" role="group" aria-label="日历看支出还是收入">${[['expense', '支出'], ['income', '收入']].map(([k, t]) =>
+        `<button data-k="${k}">${t}</button>`).join('')}</span><span class="grp" role="group" aria-label="日历看笔数还是金额">${[['count', '笔数'], ['amount', '金额']].map(([m, t]) =>
+        `<button data-m="${m}">${t}</button>`).join('')}</span></div>
+      <div class="heat"></div></div><div class="bars-box"><div class="bars scroll"></div></div></div>
+    <div class="cap rise"></div>
+    <div class="list rise"></div>
+    <div class="pager rise" role="group" aria-label="明细翻页"></div>`;
+  const $ = s => el.querySelector(s);
+
+  function draw() {
+    $('.f-from').value = st.from; $('.f-to').value = st.to;
+    const byDate = L.filterRows(D.ledger, {from: st.from, to: st.to, accounts: st.accts.size ? [...st.accts] : null});
+    const rows = st.cats.size ? byDate.filter(r => st.cats.has(r.category)) : byDate;
+    const t = L.totals(rows), ch = L.change(db, st.accts.size ? [...st.accts] : null, st.from, st.to);
+    const curs = [...new Set([...Object.keys(t), ...Object.keys(ch)])]
+      .sort((a, b) => (b === D.default_currency) - (a === D.default_currency) || a.localeCompare(b));
+    if (!curs.includes(st.cur)) st.cur = curs[0] ?? null;
+    const many = curs.length > 1;
+
+    /* 类别：只列这段日期、这些账户里出现过的（已选的总在），按笔数从多到少；默认折成一行。
+       折着时选中的排到最前，不然在比例条上点的类别可能落在折掉的那截里；展开时不挪，免得点一下按钮从手底下跳走 */
+    const n = {};
+    for (const r of byDate) if (r.kind === 'expense' || r.kind === 'income') n[r.category] = (n[r.category] || 0) + 1;
+    const shownCats = cats.filter(c => n[c] || st.cats.has(c)).sort((a, b) => (!st.open && st.cats.has(b) - st.cats.has(a))
+      || (n[b] || 0) - (n[a] || 0) || a.localeCompare(b));
+    const fc = $('.f-cat');
+    fc.innerHTML = shownCats.length ? shownCats.map(c => `<button data-v="${esc(c)}" class="${st.cats.has(c) ? 'on' : ''}" aria-pressed="${st.cats.has(c)}">${esc(c)}<span class="n">${n[c] || 0}</span></button>`).join('')
+      : '<span class="none">这段时间没有收支类别</span>';
+    fc.classList.toggle('fold', !st.open);
+    const more = $('.more');
+    more.hidden = !st.open && fc.scrollHeight <= fc.clientHeight + 2;
+    more.textContent = st.open ? '收起 ▴' : `展开全部 ${shownCats.length} 类 ▾`;
+    el.querySelectorAll('.f-acct button').forEach(b => { const on = st.accts.has(b.dataset.v); b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); });
+    el.querySelectorAll('.clr').forEach(b => { b.hidden = !st[b.dataset.clr].size; });   // 每个筛选器自己的清除，只在选了东西时出现
+
+    /* 摘要：多币种时每个币种一行，行首的币种就是切换日历和比例条的开关 */
+    const scope = st.accts.size ? '选中的账户' : '全部账户';
+    const mny = many ? moneyIn : money;   // 多币种时行首的开关已经写了币种代码
+    const head = `${many ? '<span></span>' : ''}<span class="h">支出</span><span class="h">收入</span><span class="h">余额变化 · ${scope}</span>`;
+    const lines = curs.map(c => `${many ? `<button class="cur-pick${c === st.cur ? ' on' : ''}" data-v="${esc(c)}" aria-pressed="${c === st.cur}">${esc(c)}</button>` : ''}
+      <span class="v">${mny(t[c]?.expense ?? 0, c)}</span><span class="v">${mny(t[c]?.income ?? 0, c)}</span><span class="v">${mny(ch[c] ?? 0, c, {sign: true})}</span>`).join('');
+    const tips = [many && `日历和比例条按 ${esc(st.cur)} 算，点左边的币种切换`, st.cats.size && '余额变化只看账户，和类别无关'].filter(Boolean);
+    const sm = $('.summary');
+    sm.classList.toggle('solo', !many);
+    sm.innerHTML = curs.length ? head + lines + (tips.length ? `<div class="tip">${tips.join('；')}</div>` : '') : '<span class="none">这段时间没有账</span>';
+
+    /* 日历：四档按当期最大值等分。
+       两组开关：支出 / 收入（收入换墨水蓝）、笔数 / 金额；空心格（退回多于花出）只在「支出 · 金额」时有 */
+    const amt = st.hm === 'amount', hollow = st.hk === 'expense' && amt, kname = st.hk === 'income' ? '收入' : '支出';
+    const stats = st.cur ? L.dayStats(rows, st.cur, st.hk) : {}, byDay = {};
+    for (const d in stats) byDay[d] = amt ? stats[d].amount : stats[d].count;
+    const top = Math.max(0, ...Object.values(byDay));
+    el.querySelectorAll('.modes button').forEach(b => { const on = b.dataset.k ? b.dataset.k === st.hk : b.dataset.m === st.hm;
+      b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); });
+    /* 按月排：每月一张小日历（一行一周、周一开头），范围外的日子画淡色占位；几个月横着排，放不下就左右滑（.scroll） */
+    const grid = L.monthGrid(st.from, st.to), years = new Set(grid.map(m => m.month.slice(0, 4))).size > 1;
+    let neg = false;
+    const monthsHtml = grid.map(m => {
+      const cells = Array(m.lead).fill('<i class="pad"></i>');
+      for (const {date: d, in: inside} of m.days) {
+        if (!inside) { cells.push('<i class="out"></i>'); continue; }
+        const v = byDay[d] || 0, lv = v > 0 && top > 0 ? Math.ceil(v / top * 4) : 0, hole = hollow && v < 0;
+        if (hole) neg = true;
+        const m = x => st.cur ? money(x, st.cur) : L.fmt(x);   // 这段没有账时 st.cur 是 null，别拼出「 0」
+        const tip = hole ? `${d} 退款比花的多 ${m(-v)}` : amt ? `${d} ${kname} ${m(v)}` : `${d} ${kname} ${v} 笔`;
+        cells.push(`<i class="lv${lv}${hole ? ' neg' : ''}${d === st.day ? ' on' : ''}" data-d="${d}" title="${tip}"></i>`);
+      }
+      const [y, mo] = m.month.split('-');
+      return `<div class="mo"><div class="mh">${years ? `${y}年` : ''}${+mo}月</div><div class="cells">${cells.join('')}</div></div>`;
+    }).join('');
+    const heat = $('.heat'), key = st.from + '|' + st.to, keep = heat.querySelector('.hs')?.scrollLeft ?? 0;
+    heat.classList.toggle('inc', st.hk === 'income');
+    heat.innerHTML = grid.length ? `<div class="hs scroll${grid.length === 1 ? ' one' : ''}">${monthsHtml}</div>
+      <div class="scale"><span>少 <i class="lv0"></i><i class="lv1"></i><i class="lv2"></i><i class="lv3"></i><i class="lv4"></i> 多</span>${neg ? '<span><i class="neg"></i> 退款比花的多</span>' : ''}</div>` : '';
+    /* 日期范围变了（含第一次画）停在最右边 = 最近一个月；只是切开关、选日子，留在原来滑到的位置 */
+    const hs = heat.querySelector('.hs');
+    if (hs) hs.scrollLeft = key === st.heatKey ? keep : hs.scrollWidth;
+    st.heatKey = key;
+
+    /* 比例条：不受类别筛选影响（选中的变朱红、其余退淡），这样它本身就是类别的开关 */
+    const shares = st.cur ? L.categoryShares(byDate, st.cur) : [];
+    const bars = $('.bars');
+    bars.classList.toggle('picking', st.cats.size > 0);
+    bars.innerHTML = shares.length ? shares.map(s => { const on = st.cats.has(s.category), p = s.share * 100;
+      return `<button class="bar${on ? ' on' : ''}" data-v="${esc(s.category)}" aria-pressed="${on}" title="${esc(s.category)} ${money(s.amount, st.cur)}，占支出 ${p.toFixed(1)}%">
+      <span class="name">${esc(s.category)}</span><span class="rail"><span class="fill" style="width:${p.toFixed(1)}%"></span></span>
+      <span class="amt">${money(s.amount, st.cur)}</span><span class="pct">${p < 1 ? '<1' : Math.round(p)}%</span></button>`; }).join('')
+      : '<span class="none">这段时间没有支出</span>';
+    /* 比例条按左栏高度放整数行：行高均分到正好填满，最后一行不会被切掉半截（窄屏上下排时不跟左栏，不管） */
+    bars.style.gridAutoRows = '';
+    const boxH = $('.bars-box').clientHeight, row1 = bars.querySelector('.bar');
+    if (row1 && boxH && getComputedStyle(bars).position === 'absolute') bars.style.gridAutoRows = `${boxH / Math.max(1, Math.floor(boxH / row1.offsetHeight))}px`;
+
+    const shown = st.day ? rows.filter(r => r.date === st.day) : rows;
+    $('.cap').textContent = `明细 · ${shown.length} 笔` + (st.day ? ` · 只看 ${dot(st.day)}，再点那天取消` : ' · 新的在上');
+    pageList(shown.slice().reverse());
+  }
+
+  /* 明细分页：不在页内滚动。每页条数按这块的高度量出来——先用一条样例行（带类别、账户和原话标签，和真行一样高）估，
+     哪一页还是放不下就再少一条（只减不加，进页和改窗口大小时重量）。翻页按钮重画后焦点照样交回去（见下面的点击处理） */
+  function pageList(list) {
+    const box = $('.list'), pager = $('.pager');
+    rawCard.hide();   // 明细整页重画，卡片指着的那一行就没了
+    if (!list.length) { box.innerHTML = '<p class="empty">这段时间没有账</p>'; pager.innerHTML = ''; return; }
+    if (!st.per && box.clientHeight) {
+      box.innerHTML = rowHtml({date: '2026-01-01', item: '样', raw_text: '样样', category: '样', account: '样', amount: 0, currency: 'CNY'});
+      st.per = Math.max(1, Math.floor(box.clientHeight / box.firstElementChild.offsetHeight));
+    }
+    const fill = () => {
+      const pages = Math.ceil(list.length / (st.per || 8));
+      st.pg = Math.max(0, Math.min(st.pg, pages - 1));
+      box.innerHTML = list.slice(st.pg * (st.per || 8), (st.pg + 1) * (st.per || 8)).map(rowHtml).join('');
+      return pages;
+    };
+    let pages = fill();
+    while (st.per > 1 && box.clientHeight && box.scrollHeight > box.clientHeight + 1) { st.per--; pages = fill(); }
+    const btn = (v, t, off) => `<button data-pg="${v}" data-v="${v}" aria-disabled="${off}"${off ? ' class="off"' : ''}>${t}</button>`;
+    /* 页码点开能直接跳到某一页（弹层见 popPages） */
+    const jump = `<button class="jump" data-v="jump" aria-haspopup="true" aria-expanded="false" aria-label="第 ${st.pg + 1} 页，选择要跳到的页">${st.pg + 1}<span class="car">▾</span></button>`;
+    pager.innerHTML = pages > 1 ? `${btn('prev', '‹ 上一页', st.pg === 0)}<span class="at">第${jump}/ ${pages} 页</span>${btn('next', '下一页 ›', st.pg === pages - 1)}` : '';
+    pager.dataset.pages = pages;
+  }
+
+  const toggle = (set, v) => set.has(v) ? set.delete(v) : set.add(v);
+  /* 筛选（日期、账户、类别、选日子）一变，明细回到第 1 页；切币种、切日历开关、展开类别不动明细，页码不变 */
+  $('.f-from').onchange = e => { st.from = clamp(e.target.value || min); if (st.from > st.to) st.to = st.from; st.day = null; st.pg = 0; draw(); };
+  $('.f-to').onchange = e => { st.to = clamp(e.target.value || max); if (st.to < st.from) st.from = st.to; st.day = null; st.pg = 0; draw(); };
+  /* 页码弹层：一格一个页码，最多 8 列，页多了在弹层里滚。点页码跳过去；点别处、Esc、再点页码收起 */
+  function popPages(open) {
+    const old = $('.pg-pop'), j = $('.pager .jump');
+    old?.remove(); j?.setAttribute('aria-expanded', !!open);
+    if (!open || !j) return;
+    const n = +$('.pager').dataset.pages, pop = document.createElement('div');
+    pop.className = 'pg-pop scroll'; pop.setAttribute('role', 'group'); pop.setAttribute('aria-label', '跳到第几页');
+    pop.style.gridTemplateColumns = `repeat(${Math.min(n, 8)}, auto)`;
+    pop.innerHTML = [...Array(n)].map((_, k) => `<button data-goto="${k}" data-v="jump"${k === st.pg ? ' class="on" aria-current="page"' : ''}>${k + 1}</button>`).join('');
+    $('.pager').appendChild(pop);
+    pop.querySelector('.on')?.scrollIntoView({block: 'nearest'});
+    if (j.matches(':focus-visible')) pop.querySelector('.on')?.focus();   // 键盘打开的：焦点进弹层
+  }
+  addEventListener('click', e => { if ($('.pg-pop') && !e.target.closest('.pg-pop, .pager .jump')) popPages(false); });
+  addEventListener('keydown', e => { if (e.key === 'Escape' && $('.pg-pop')) { popPages(false); $('.pager .jump')?.focus(); } });
+  el.addEventListener('click', e => {
+    const b = e.target.closest('button, i[data-d]');
+    if (!b) return;
+    if (b.classList.contains('jump')) { popPages(!$('.pg-pop')); return; }
+    if (b.dataset.goto) st.pg = +b.dataset.goto;
+    else if (b.dataset.pg) { if (b.getAttribute('aria-disabled') === 'true') return; st.pg += b.dataset.pg === 'next' ? 1 : -1; }
+    else if (b.dataset.clr) { st[b.dataset.clr].clear(); st.pg = 0; }
+    else if (b.closest('.f-acct')) { toggle(st.accts, b.dataset.v); st.pg = 0; }
+    else if (b.closest('.f-cat') || b.classList.contains('bar')) { toggle(st.cats, b.dataset.v); st.pg = 0; }
+    else if (b.classList.contains('cur-pick')) st.cur = b.dataset.v;
+    else if (b.dataset.k) st.hk = b.dataset.k;   // 热力图开关：按钮不重画，焦点自己留着
+    else if (b.dataset.m) st.hm = b.dataset.m;
+    else if (b.classList.contains('more')) st.open = !st.open;
+    else if (b.dataset.p) { [st.from, st.to] = b.dataset.p === 'ch' ? [ST.range.from, ST.range.to] : [min, max]; st.day = null; st.pg = 0; }
+    else if (b.dataset.d) { st.day = st.day === b.dataset.d ? null : b.dataset.d; st.pg = 0; }
+    else return;
+    const box = b.closest('.f-cat, .summary, .bars, .pager'), had = document.activeElement === b, v = b.dataset.v;
+    draw();
+    /* 类别、币种、比例条、翻页每次重画都是新按钮：用键盘按的，焦点交给重画后同一个按钮，不然焦点掉回 body，下一下空格就翻页了 */
+    if (box && had) [...box.querySelectorAll('button')].find(x => x.dataset.v === v)?.focus();
+    /* 清除按钮清完就藏起来了：焦点交给同一个筛选器的第一个词 */
+    if (b.dataset.clr && had) b.parentElement.querySelector('.chips button')?.focus();
+  });
+  draw();
+  /* 第一次画时页面还没布局好，进页时重画一次（类别的「展开」、明细每页几条才量得准）；改窗口大小也重量每页条数 */
+  el.closest('.page').addEventListener('enter', () => { st.per = null; draw(); });
+  addEventListener('resize', () => { st.per = null; draw(); });
+}
+/* 钱包：标题带上本章日期（整页都按本章算；看板可以改日期，翻过来别以为跟着变了，用户 10-09）。每个账户开始 / 结束 / 变化；收入 − 支出 ＋ 去向不明 ＝ 净变化（按分两边相等才显示）；
+   这段时间真扣掉的定期支出（recurring 且 kind 是 expense，定期收入不列）；校准差额 + ［查］。只按 kind / recurring 挑行。 */
+function renderPocket(el) {
+  const inRange = L.filterRows(D.ledger, {from: ST.range.from, to: ST.range.to});
+  const rec = inRange.filter(r => r.recurring && r.kind === 'expense'), cal = inRange.filter(r => r.kind === 'calibration');
+  const c100 = x => Math.round(x * 100);
+  const acctRows = ST.accounts.map(a => a.start === null
+    ? `<tr><td>${esc(a.account)}</td><td colspan="2" class="mute">没记账户的账，只看净变化</td><td>${money(a.change, a.currency, {sign: true})}</td></tr>`
+    : `<tr><td>${esc(a.account)}</td><td>${money(a.start, a.currency)}</td><td>${money(a.end, a.currency)}</td><td>${money(a.change, a.currency, {sign: true})}</td></tr>`).join('');
+  const lost = Object.entries(ST.totals).filter(([, t]) => t.calibration !== 0).map(([c, t]) =>
+    `<div class="lost">${t.calibration < 0 ? '去向不明' : '来路不明'} ${money(t.calibration, c, {sign: true})}</div>`).join('');
+  const eq = Object.entries(ST.totals).filter(([c, t]) =>
+    c100(t.income) - c100(t.expense) + c100(t.calibration) === c100(ST.wallet_change[c]) && (t.income || t.expense)).map(([c, t]) =>
+    `<div class="eq">收入 ${money(t.income, c)} − 支出 ${money(t.expense, c)}${t.calibration ? ` ＋ ${t.calibration < 0 ? '去向不明' : '来路不明'} ${money(t.calibration, c, {sign: true})}` : ''} ＝ ${money(ST.wallet_change[c], c, {sign: true})}</div>`).join('');
+  el.innerHTML = `
+    <div class="kicker rise">钱包<span class="rng"> · ${dot(ST.range.from)} — ${dot(ST.range.to)}</span></div>
+    <table class="accts rise"><tr><th></th><th>开始</th><th>结束</th><th>变化</th></tr>${acctRows}</table>
+    ${eq ? `<div class="rise">${eq}</div>` : ''}
+    ${rec.length ? `<div class="pk-sec rise"><h3>这段时间的固定支出</h3><div class="rows scroll open">${rec.map(rowHtml).join('')}</div></div>` : ''}
+    ${cal.length ? `<div class="pk-sec rise">${lost}
+      <p class="pk-mute">你报的余额和账上算出来的，对不上的部分。</p>
+      <button class="chk" aria-expanded="false">查 · 这 ${cal.length} 次</button>
+      <div class="rows scroll" inert>${cal.map(rowHtml).join('')}</div>
+      <p class="pk-mute">愿意的话，给我账单，帮你对上。</p></div>` : ''}`;
+  const chk = el.querySelector('.chk');
+  if (chk) chk.onclick = () => toggleRows(chk, el.querySelector('.pk-sec .chk ~ .rows'));
+}
+
+/* 原话小卡片：整页一张，挂在 body 上（position:fixed），所以［查］的滚动区、看板的明细框都裁不到它。
+   鼠标：悬停在带原话的行上就出、移开就收；键盘：焦点到行上就出；触屏没有悬停：轻点行出、点别处收。
+   原话用 textContent 填，不进 innerHTML */
+const rawCard = (() => {
+  const card = document.createElement('div');
+  card.className = 'rawcard'; card.id = 'rawcard'; card.setAttribute('role', 'tooltip');
+  document.body.appendChild(card);
+  let row = null, lastType = 'mouse';
+  function hide() {
+    if (!row) return;
+    row.classList.remove('peek'); row.removeAttribute('aria-describedby');
+    row = null; card.classList.remove('show');
+  }
+  function show(r) {
+    if (r === row) return;
+    hide(); row = r;
+    r.classList.add('peek'); r.setAttribute('aria-describedby', 'rawcard');
+    card.textContent = `「${r.dataset.raw}」`;
+    const b = r.getBoundingClientRect(), a = (r.querySelector('.tag') || r).getBoundingClientRect();
+    const w = card.offsetWidth, h = card.offsetHeight, m = 12, gap = 6;
+    let top = b.bottom + gap;
+    if (top + h > innerHeight - m) top = Math.max(m, b.top - gap - h);   // 底下放不下：翻到行上面
+    const left = Math.max(m, Math.min(innerWidth - m - w, a.right - w));   // 右边和原话标签对齐，靠左边缘就往右推
+    card.style.left = `${Math.round(left)}px`; card.style.top = `${Math.round(top)}px`;
+    card.classList.add('show');
+  }
+  const rowAt = t => t && t.closest ? t.closest('.row.has-raw') : null;
+  addEventListener('pointerdown', e => { lastType = e.pointerType || 'mouse'; }, true);
+  addEventListener('pointermove', e => {
+    if (e.pointerType !== 'mouse') return;
+    const r = rowAt(e.target);
+    if (r) show(r); else if (row && !row.matches(':focus-visible')) hide();   // 键盘停在行上时卡片留着
+  });
+  /* 指针离开窗口（pointerleave 不冒泡，挂在 document 上不可靠）；键盘停在行上时卡片留着，和上面 pointermove 一样 */
+  addEventListener('pointerout', e => { if (e.pointerType !== 'mouse') return; if (!e.relatedTarget && !(row && row.matches(':focus-visible'))) hide(); });
+  addEventListener('click', e => {   // 触屏：轻点行 = 出 / 收，点别处 = 收
+    if (lastType === 'mouse') return;
+    const r = rowAt(e.target);
+    if (r && r !== row) show(r); else hide();
+  });
+  addEventListener('focusin', e => { const r = rowAt(e.target); if (r && r.matches(':focus-visible')) show(r); });   // 只认键盘来的焦点：点击 / 轻点也会让行拿到焦点，那时归上面两条管
+  addEventListener('focusout', e => { if (e.target === row) hide(); });
+  /* 卡片指着的那一行所在的滚动区一动，行就离开了卡片，收起；别的区滚（比如 Tab 经过比例条时它自己滚了一下）不管 */
+  addEventListener('scroll', e => { if (row && (e.target === document || e.target.contains && e.target.contains(row))) hide(); }, true);
+  addEventListener('resize', hide);
+  return {hide};
+})();
+
+/* ---------- 翻页引擎：移植自手感原型 v2，参数和回弹公式见设计方案「交互手感」 ---------- */
+const R = 150, T = 260, DUR = 800, QUIET = 240;
+const track = document.getElementById('track'), nav = document.getElementById('nav');
+const toast = document.createElement('div'); toast.className = 'toast'; document.body.appendChild(toast);
+const pages = PAGES.map((p, i) => {
+  const sec = document.createElement('section'), inner = document.createElement('div');
+  sec.className = 'page'; inner.className = 'inner'; sec.appendChild(inner); track.appendChild(sec);
+  sec.inert = i !== 0;   // 不在屏上的页 inert：Tab 走不进去，空格也按不到那里的按钮；enter() 换页时跟着换
+  p.render(inner, i);
+  const a = document.createElement('a');
+  a.innerHTML = `<span class="ch">${esc(p.ch)}</span><span class="t">${esc(p.title)}</span>`;
+  a.onclick = () => go(i); nav.appendChild(a);
+  a.tabIndex = 0; a.onkeydown = e => { if (e.key === 'Enter') go(i); };   // 键盘也能跳页
+  return sec;
+});
+const links = [...nav.children];
+/* 每行宽 = 最长那一行（含文字后面 16px）；展开宽度 = 左边距 ＋ 它 ＋ 6em 淡出。先撤掉上次写的行宽再量，不然量到的是旧值；字体载入后、改窗口大小时重量 */
+function measureNav() {
+  nav.style.removeProperty('--nav-row');
+  const w = Math.ceil(Math.max(...links.map(a => a.scrollWidth))), cs = getComputedStyle(nav);
+  nav.style.setProperty('--nav-row', `${w}px`);
+  nav.style.setProperty('--nav-open', `${Math.ceil(parseFloat(cs.paddingLeft) + w + 6 * parseFloat(cs.fontSize))}px`);
+}
+measureNav(); document.fonts?.ready.then(measureNav); addEventListener('resize', measureNav);
+let cur = 0, acc = 0, pos = 0, vel = 0, animating = false, locked = false, lastInput = 0, quietT = null, toastT = null, lastToast = 0;
+const vh = () => window.innerHeight;
+const rubber = x => Math.sign(x) * (1 - 1 / (Math.abs(x) * 0.55 / vh() + 1)) * vh();
+
+function countUp(el) {
+  const to = +el.dataset.to, t0 = performance.now(), d = 1100;
+  (function f(t) {
+    const k = Math.min(1, (t - t0) / d), e = 1 - Math.pow(1 - k, 3);
+    el.textContent = L.fmt(to * e, {sign: true});
+    if (k < 1) requestAnimationFrame(f); else el.textContent = L.fmt(to, {sign: true});
+  })(t0);
+}
+
+function enter(i) {
+  pages.forEach((p, j) => { p.classList.toggle('in', j === i); p.inert = j !== i; });
+  links.forEach((l, j) => l.classList.toggle('on', j === i));
+  document.getElementById('hint').style.opacity = i === pages.length - 1 ? 0 : 1;
+  pages[i].querySelectorAll('.big[data-to]').forEach(countUp);
+  pages[i].dispatchEvent(new Event('enter'));   // 趋势图在这时开始画
+}
+
+function showToast(msg) {
+  const now = performance.now();
+  if (now - lastToast < 1200 && toast.classList.contains('show')) return;
+  lastToast = now; toast.textContent = msg; toast.classList.add('show');
+  clearTimeout(toastT); toastT = setTimeout(() => toast.classList.remove('show'), 3000);
+}
+
+/* 推的过程：当前页随推力稍微后退、缩小、变淡，松手倒放回来 */
+function pullFx(off) {
+  const inner = pages[cur].querySelector('.inner'), p = Math.min(1, Math.abs(off) / R);
+  inner.style.transform = `translateY(${off * 0.25}px) scale(${1 - 0.035 * p})`; inner.style.opacity = 1 - 0.35 * p;
+}
+function clearFx(i) { const inner = pages[i].querySelector('.inner'); inner.style.transform = ''; inner.style.opacity = ''; }
+
+/* 每帧：推力没有新输入就自然衰减 → 一定会回弹；位置用弹簧追目标 → 滚轮的一格一格被抹平 */
+function loop() {
+  if (!animating) {
+    if (performance.now() - lastInput > 90) acc *= 0.86;
+    if (Math.abs(acc) < 0.5) acc = 0;
+    const atEdge = (acc > 0 && cur === pages.length - 1) || (acc < 0 && cur === 0);
+    const target = -rubber(atEdge ? acc * 0.45 : acc);
+    vel += (target - pos) * 0.16; vel *= 0.68; pos += vel;
+    if (Math.abs(pos) < 0.05 && Math.abs(vel) < 0.05) { pos = 0; vel = 0; }
+    track.style.transform = `translateY(${-cur * vh() + pos}px)`;
+    pullFx(pos);
+  }
+  requestAnimationFrame(loop);
+}
+
+function go(i) {
+  if (i < 0 || i >= pages.length || i === cur || animating) return;
+  animating = true; locked = true; rawCard.hide();
+  clearFx(cur); pages[cur].classList.remove('in');
+  cur = i; acc = 0; vel = 0; pos = 0;
+  track.style.transition = `transform ${DUR}ms cubic-bezier(.65,0,.15,1)`;
+  track.style.transform = `translateY(${-cur * vh()}px)`;
+  setTimeout(() => { track.style.transition = 'none'; animating = false; enter(cur); armQuiet(); }, DUR * 0.85);
+}
+function armQuiet() { clearTimeout(quietT); quietT = setTimeout(() => locked = false, QUIET); }   // 吞掉触控板惯性余波
+
+/* 页内可滚动区（.scroll）：滚轮 / 触控从这里开始，就只滚这个区，滚到头也不翻页（翻页靠指针在区外推、键盘、左栏）。
+   只认真有东西可滚的区：内容没溢出的 .scroll 和普通页面看起来一样，在那儿推不动页会像死区 */
+function scrollArea(t) {
+  for (let r = t && t.closest && t.closest('.scroll'); r; r = r.parentElement && r.parentElement.closest('.scroll'))
+    if (r.scrollHeight > r.clientHeight + 1 || r.scrollWidth > r.clientWidth + 1) return r;
+  return null;
+}
+
+function push(dy) {
+  if (animating || locked) { armQuiet(); return; }
+  lastInput = performance.now(); acc += dy;
+  const atEdge = (acc > 0 && cur === pages.length - 1) || (acc < 0 && cur === 0);
+  if (atEdge) { if (Math.abs(acc) > T * 0.8) showToast(cur === 0 ? '这是第一页哦' : '已经是最后一页了哦'); return; }
+  if (Math.abs(acc) > T) go(cur + Math.sign(acc));
+}
+
+addEventListener('wheel', e => {
+  e.preventDefault();
+  const k = e.deltaMode === 1 ? 32 : 1, dy = e.deltaY * k, dx = e.deltaX * k, r = scrollArea(e.target);
+  if (r) {   // 竖着能滚就竖着滚；只能横着滚（热力图的月份）就把竖向滚轮也换成左右
+    if (r.scrollHeight > r.clientHeight + 1) { r.scrollTop += dy; r.scrollLeft += dx; }
+    else r.scrollLeft += Math.abs(dx) > Math.abs(dy) ? dx : dy;
+    return;
+  }
+  push(dy);
+}, {passive: false});
+let ty = null;
+addEventListener('touchstart', e => { ty = scrollArea(e.target) ? null : e.touches[0].clientY; }, {passive: true});   // 手指落在滚动区里：这一下交给浏览器自己滚
+addEventListener('touchmove', e => { if (ty === null) return; const y = e.touches[0].clientY; push((ty - y) * 1.4); ty = y; }, {passive: true});
+addEventListener('touchend', () => { ty = null; });
+addEventListener('keydown', e => {
+  if (e.target.closest && e.target.closest('input, select, textarea')) return;   // 看板里改日期时不翻页
+  if ((e.key === ' ' || e.key === 'Enter') && e.target.closest && e.target.closest('button, a')) return;   // 焦点在按钮、链接上时，空格和回车留给它自己（［查］、看板的筛选）；方向键照常翻页
+  /* 焦点在流水行上：空格和回车什么都不做——不翻页，也不让浏览器拿空格去滚［查］的滚动区（一滚，原话卡片就收了） */
+  if ((e.key === ' ' || e.key === 'Enter') && e.target.closest && e.target.closest('.row')) { e.preventDefault(); return; }
+  /* 翻页键只翻页：焦点在［查］的行上时，浏览器默认还会顺手滚那个滚动区，拦掉 */
+  if (['ArrowDown', 'PageDown', ' '].includes(e.key)) { e.preventDefault(); cur === pages.length - 1 ? showToast('已经是最后一页了哦') : go(cur + 1); }
+  if (['ArrowUp', 'PageUp'].includes(e.key)) { e.preventDefault(); cur === 0 ? showToast('这是第一页哦') : go(cur - 1); }
+});
+addEventListener('resize', () => { track.style.transform = `translateY(${-cur * vh()}px)`; });
+
+track.style.transform = 'translateY(0)'; setTimeout(() => enter(0), 150); requestAnimationFrame(loop);
+</script>
+</body>
+</html>
